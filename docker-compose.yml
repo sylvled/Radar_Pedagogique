@@ -1,0 +1,15 @@
+services:
+  radar:
+    build: .
+    container_name: radar-pedagogique
+    restart: unless-stopped
+    ports:
+      - "8510:8501"        # accès : http://localhost:8510
+    volumes:
+      - ./input_files:/app/input_files   # dossier surveillé
+    environment:
+      - TZ=Europe/Paris
+
+networks:
+  default:
+    name: radar-pedagogique-network

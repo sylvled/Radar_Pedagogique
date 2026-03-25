@@ -1,0 +1,25 @@
+# Données locales (fichiers radar binaires)
+input_files/*.dbz1
+input_files/*.db
+input_files/*.bin
+input_files/*.lnk
+input_files/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+
+# Environnement
+.env
+.env.local
+
+# Docker
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
