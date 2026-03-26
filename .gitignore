@@ -1,9 +1,12 @@
-# Données locales (fichiers radar binaires)
+# Données locales (fichiers radar binaires — non versionnés)
 input_files/*.dbz1
 input_files/*.db
 input_files/*.bin
 input_files/*.lnk
 input_files/
+
+# Note : sample_data/ est intentionnellement inclus dans le repo
+# Il contient un fichier .dbz1 de démonstration pour Streamlit Community Cloud
 
 # Python
 __pycache__/

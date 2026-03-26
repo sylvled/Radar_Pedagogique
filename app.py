@@ -11,11 +11,10 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from pathlib import Path
 import sys
-import time
 
 # Ajouter le répertoire racine au path pour importer le parser
 sys.path.insert(0, str(Path(__file__).parent))
-from parser.dbz1_parser import parse_dbz1, scan_folder, RadarDataset
+from parser.dbz1_parser import parse_dbz1, RadarDataset
 
 # ---------------------------------------------------------------------------
 # Configuration Streamlit
@@ -78,14 +77,22 @@ div[data-testid="stRadio"] > div > label:has(input:checked) {
     color: #ff4b4b;
     font-weight: 600;
 }
+/* Radar list items */
+.radar-item {
+    padding: 4px 0;
+    font-size: 0.82rem;
+    color: #444;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
 </style>
 """, unsafe_allow_html=True)
 
 # ---------------------------------------------------------------------------
 # Constantes
 # ---------------------------------------------------------------------------
-INPUT_FOLDER = Path(__file__).parent / "input_files"
-INPUT_FOLDER.mkdir(exist_ok=True)
+SAMPLE_FOLDER = Path(__file__).parent / "sample_data"
 
 DAYS_FR = {0: "Lundi", 1: "Mardi", 2: "Mercredi", 3: "Jeudi",
            4: "Vendredi", 5: "Samedi", 6: "Dimanche"}
@@ -154,70 +161,120 @@ def speed_category(v: int, limit: int) -> str:
         return f"+30 km/h"
 
 
+@st.cache_data(show_spinner=False)
+def get_radar_label(data_bytes: bytes, filename: str) -> str:
+    """Retourne un label lisible pour un radar (commune + device_id)."""
+    try:
+        meta, _ = load_dataset(data_bytes, filename)
+        commune = (meta.get("commune") or "").strip()
+        device_id = (meta.get("device_id") or "").strip()
+        if commune and commune != "Inconnue":
+            if device_id and device_id != "—":
+                return f"📍 {commune}  [{device_id}]"
+            return f"📍 {commune}"
+        if device_id and device_id != "—":
+            return f"📡 {device_id}"
+        stem = Path(filename).stem
+        return f"📡 {stem}"
+    except Exception:
+        return f"📡 {Path(filename).stem}"
+
+
 # ---------------------------------------------------------------------------
-# Sidebar — Chargement du fichier
+# Initialisation session state
+# ---------------------------------------------------------------------------
+if "radars" not in st.session_state:
+    # dict {unique_key: bytes}
+    st.session_state.radars = {}
+
+# Auto-chargement des fichiers de démonstration au premier lancement
+if not st.session_state.radars and SAMPLE_FOLDER.exists():
+    for p in sorted(SAMPLE_FOLDER.glob("*.dbz1")):
+        demo_key = f"[Démo] {p.name}"
+        if demo_key not in st.session_state.radars:
+            st.session_state.radars[demo_key] = p.read_bytes()
+
+
+# ---------------------------------------------------------------------------
+# Sidebar — Gestion des radars
 # ---------------------------------------------------------------------------
 with st.sidebar:
-    st.image("https://upload.wikimedia.org/wikipedia/commons/thumb/c/cf/Speed_camera_icon.svg/100px-Speed_camera_icon.svg.png",
-             width=60)
+    st.image(
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/c/cf/Speed_camera_icon.svg/100px-Speed_camera_icon.svg.png",
+        width=60,
+    )
     st.title("Radar Pédagogique")
     st.markdown("---")
 
-    st.subheader("📁 Charger un fichier")
+    # ── Uploader ──────────────────────────────────────────────────────────────
+    st.subheader("📁 Ajouter des fichiers")
+    uploaded_files = st.file_uploader(
+        "Déposer un ou plusieurs fichiers .dbz1",
+        type=["dbz1"],
+        accept_multiple_files=True,
+        help="Fichiers statistiques Elan Cité / Evocom",
+        label_visibility="collapsed",
+    )
+    for f in uploaded_files or []:
+        key = f.name
+        if key not in st.session_state.radars:
+            st.session_state.radars[key] = f.read()
 
-    # Onglet 1 : Upload manuel
-    tab_upload, tab_folder = st.tabs(["⬆️ Upload", "📂 Dossier"])
+    # ── Liste des radars chargés ───────────────────────────────────────────────
+    radar_keys = list(st.session_state.radars.keys())
 
-    selected_bytes = None
-    selected_name = None
-
-    with tab_upload:
-        uploaded = st.file_uploader(
-            "Déposer un fichier .dbz1",
-            type=["dbz1"],
-            help="Fichier statistiques Elan Cité / Evocom"
-        )
-        if uploaded:
-            selected_bytes = uploaded.read()
-            selected_name = uploaded.name
-
-    with tab_folder:
-        available = scan_folder(INPUT_FOLDER)
-        if available:
-            chosen = st.selectbox(
-                "Fichiers détectés",
-                options=available,
-                format_func=lambda p: p.name,
-            )
-            if st.button("Charger ce fichier", use_container_width=True):
-                with open(chosen, "rb") as f:
-                    selected_bytes = f.read()
-                selected_name = chosen.name
-                st.session_state["loaded_file"] = chosen.name
-        else:
-            st.info(f"Aucun fichier dans\n`{INPUT_FOLDER}`")
-
-    # Garder le dernier fichier chargé en session
-    if selected_bytes is not None:
-        st.session_state["data_bytes"] = selected_bytes
-        st.session_state["data_name"] = selected_name
-
-    # Filtres (affichés après chargement)
-    if "data_bytes" in st.session_state:
+    if radar_keys:
         st.markdown("---")
-        st.subheader("🔧 Filtres")
+        st.subheader(f"📡 Radars chargés ({len(radar_keys)})")
 
-        # Ces filtres seront appliqués dans le corps principal
-        st.session_state.setdefault("filter_year", "Tous")
-        st.session_state.setdefault("filter_day", "Tous")
+        to_delete = None
+        for rk in radar_keys:
+            lbl = get_radar_label(st.session_state.radars[rk], rk)
+            col1, col2 = st.columns([5, 1])
+            col1.markdown(f"<div class='radar-item'>{lbl}</div>", unsafe_allow_html=True)
+            if col2.button("✕", key=f"del_{rk}", help="Retirer ce radar"):
+                to_delete = rk
+        if to_delete:
+            del st.session_state.radars[to_delete]
+            # Réinitialiser la sélection si le radar actif est supprimé
+            if st.session_state.get("sel_radar") == to_delete:
+                remaining = [k for k in radar_keys if k != to_delete]
+                st.session_state["sel_radar"] = remaining[0] if remaining else None
+            st.rerun()
+
+        st.markdown("---")
+
+        # ── Sélecteur du radar actif ──────────────────────────────────────────
+        if len(radar_keys) > 1:
+            st.subheader("🎯 Radar actif")
+            labels = {rk: get_radar_label(st.session_state.radars[rk], rk) for rk in radar_keys}
+            # Garder la sélection précédente si elle existe encore
+            prev = st.session_state.get("sel_radar")
+            default_idx = radar_keys.index(prev) if prev in radar_keys else 0
+            active_key = st.selectbox(
+                "Sélectionner le radar à analyser",
+                options=radar_keys,
+                index=default_idx,
+                format_func=lambda k: labels[k],
+                label_visibility="collapsed",
+                key="sel_radar",
+            )
+        else:
+            active_key = radar_keys[0]
+            lbl = get_radar_label(st.session_state.radars[active_key], active_key)
+            st.info(lbl)
+
+    else:
+        active_key = None
+
+    # ── Filtres (affichés après chargement) ───────────────────────────────────
+    filters_placeholder = st.empty()
 
 
 # ---------------------------------------------------------------------------
-# Zone principale
+# Zone principale : pas de radar chargé
 # ---------------------------------------------------------------------------
-
-if "data_bytes" not in st.session_state:
-    # Page d'accueil
+if not active_key:
     st.markdown("## 🚦 Radar Pédagogique — Analyse statistique")
     st.markdown("""
     **Chargez un fichier `.dbz1`** (format Elan Cité / Evocom) via le panneau latéral
@@ -228,22 +285,21 @@ if "data_bytes" not in st.session_state:
     - Répartition horaire
     - Tendance journalière / hebdomadaire / mensuelle
     - Distribution des excès de vitesse
+    - Matrices calendaires de dépassements
 
-    **Sources de données supportées :**
-    - Upload manuel depuis votre ordinateur
-    - Fichiers présents dans le dossier `input_files/`
+    **Vous pouvez charger plusieurs radars** et basculer entre eux via le sélecteur.
     """)
     st.stop()
 
 
 # ---------------------------------------------------------------------------
-# Chargement et parsing
+# Chargement et parsing du radar actif
 # ---------------------------------------------------------------------------
 with st.spinner("Décompression et analyse du fichier..."):
     try:
         meta, df = load_dataset(
-            st.session_state["data_bytes"],
-            st.session_state.get("data_name", "fichier.dbz1")
+            st.session_state.radars[active_key],
+            active_key,
         )
     except Exception as e:
         st.error(f"Erreur de lecture du fichier : {e}")
@@ -255,38 +311,52 @@ with st.spinner("Décompression et analyse du fichier..."):
 # ---------------------------------------------------------------------------
 with st.sidebar:
     if not df.empty:
+        st.markdown("---")
+        st.subheader("🔧 Filtres")
+
         years = sorted(df["annee"].unique().tolist())
         year_options = ["Tous"] + [str(y) for y in years]
-        sel_year = st.selectbox("Année", year_options, key="filter_year")
+        # Clé unique par radar pour éviter les conflits de session_state
+        rk_safe = active_key.replace(" ", "_").replace("[", "").replace("]", "")
+        sel_year = st.selectbox("Année", year_options, key=f"fy_{rk_safe}")
 
         day_options = ["Tous"] + [DAYS_FR[i] for i in range(7)]
-        sel_day = st.selectbox("Jour de la semaine", day_options, key="filter_day")
+        sel_day = st.selectbox("Jour de la semaine", day_options, key=f"fd_{rk_safe}")
 
         speed_range = st.slider(
             "Plage de vitesse (km/h)",
             min_value=int(df["vitesse"].min()),
             max_value=int(df["vitesse"].max()),
             value=(int(df["vitesse"].min()), int(df["vitesse"].max())),
-            key="filter_speed",
+            key=f"fs_{rk_safe}",
         )
+    else:
+        sel_year = "Tous"
+        sel_day = "Tous"
+        speed_range = None
 
-# Appliquer les filtres
+
+# ---------------------------------------------------------------------------
+# Application des filtres
+# ---------------------------------------------------------------------------
 df_f = df.copy()
-if "filter_year" in st.session_state and st.session_state["filter_year"] != "Tous":
-    df_f = df_f[df_f["annee"] == int(st.session_state["filter_year"])]
 
-if "filter_day" in st.session_state and st.session_state["filter_day"] != "Tous":
-    day_idx = [k for k, v in DAYS_FR.items() if v == st.session_state["filter_day"]][0]
+if sel_year != "Tous":
+    df_f = df_f[df_f["annee"] == int(sel_year)]
+
+if sel_day != "Tous":
+    day_idx = [k for k, v in DAYS_FR.items() if v == sel_day][0]
     df_f = df_f[df_f["jour_semaine"] == day_idx]
 
-if "filter_speed" in st.session_state:
-    lo, hi = st.session_state["filter_speed"]
+if speed_range is not None:
+    lo, hi = speed_range
     df_f = df_f[(df_f["vitesse"] >= lo) & (df_f["vitesse"] <= hi)]
 
 
 # ---------------------------------------------------------------------------
 # En-tête
 # ---------------------------------------------------------------------------
+radar_label = get_radar_label(st.session_state.radars[active_key], active_key)
 st.markdown(f"## 🚦 {meta['commune']} — Radar `{meta['device_id']}`")
 
 d1 = meta["date_debut"].strftime("%d/%m/%Y") if meta["date_debut"] else "—"
@@ -295,6 +365,7 @@ st.markdown(f"**Période :** {d1} → {d2} &nbsp;|&nbsp; **Limite configurée :*
 
 if df_f.shape[0] < df.shape[0]:
     st.info(f"Filtres actifs — {df_f.shape[0]:,} passages affichés sur {df.shape[0]:,}")
+
 
 # ---------------------------------------------------------------------------
 # KPIs
@@ -318,6 +389,7 @@ with k5:
 
 st.markdown("---")
 
+
 # ---------------------------------------------------------------------------
 # Navigation par onglets (session_state — ne se réinitialise pas au rerun)
 # ---------------------------------------------------------------------------
@@ -340,7 +412,9 @@ active_tab = st.radio(
 )
 
 
-# ---- Tab 1 : Distribution des vitesses ----
+# ============================================================================
+# Tab 1 : Distribution des vitesses
+# ============================================================================
 if active_tab == TAB_NAMES[0]:
     col_l, col_r = st.columns([2, 1])
 
@@ -373,7 +447,7 @@ if active_tab == TAB_NAMES[0]:
         st.subheader("Catégories d'excès")
         if not df_f.empty:
             df_f["categorie"] = df_f["vitesse"].apply(lambda v: speed_category(v, limit))
-            cat_order = [f"+1 à +5 km/h", f"+6 à +10 km/h", f"+11 à +20 km/h", f"+21 à +30 km/h", f"+30 km/h"]
+            cat_order = ["+1 à +5 km/h", "+6 à +10 km/h", "+11 à +20 km/h", "+21 à +30 km/h", "+30 km/h"]
             cat_counts = df_f["categorie"].value_counts().reindex(cat_order, fill_value=0).reset_index()
             cat_counts.columns = ["categorie", "passages"]
             cat_counts["pct"] = (cat_counts["passages"] / df_f.shape[0] * 100).round(1)
@@ -426,14 +500,16 @@ if active_tab == TAB_NAMES[0]:
         )
         top50["date"] = top50["date"].dt.strftime("%d/%m/%Y")
         top50 = top50.reset_index(drop=True)
-        top50.index += 1  # rang 1..50
+        top50.index += 1
         top50.columns = ["Date", "Heure", "Vitesse (km/h)", "Excès (km/h)"]
         st.dataframe(top50, use_container_width=True, height=400)
     else:
         st.info("Aucune donnée avec les filtres actuels.")
 
 
-# ---- Tab 2 : Profil horaire ----
+# ============================================================================
+# Tab 2 : Profil horaire
+# ============================================================================
 elif active_tab == TAB_NAMES[1]:
     st.subheader("Répartition par tranche horaire (10 min)")
 
@@ -487,7 +563,9 @@ elif active_tab == TAB_NAMES[1]:
         st.info("Aucune donnée avec les filtres actuels.")
 
 
-# ---- Tab 3 : Tendances ----
+# ============================================================================
+# Tab 3 : Tendances
+# ============================================================================
 elif active_tab == TAB_NAMES[2]:
     col_l, col_r = st.columns(2)
 
@@ -565,10 +643,12 @@ elif active_tab == TAB_NAMES[2]:
         st.plotly_chart(fig, use_container_width=True)
 
 
-# ---- Tab 4 : Calendrier ----
+# ============================================================================
+# Tab 4 : Calendrier
+# ============================================================================
 elif active_tab == TAB_NAMES[3]:
 
-    # ── Heatmap existante : passages totaux / jour ───────────────────────────
+    # ── Heatmap passages totaux / jour ────────────────────────────────────────
     st.subheader("Carte de chaleur — passages totaux par jour")
     if not df_f.empty:
         daily_c = df_f.groupby("date").size().reset_index(name="passages")
@@ -594,7 +674,7 @@ elif active_tab == TAB_NAMES[3]:
 
     st.markdown("---")
 
-    # ── Matrice dynamique par seuil de vitesse ───────────────────────────────
+    # ── Matrice dynamique par seuil de vitesse ────────────────────────────────
     st.subheader("🎯 Matrice de dépassements par seuil de vitesse")
     st.caption("Chaque cellule = 1 jour. Couleur = nombre de passages dépassant le seuil. "
                "Données complètes (indépendant des filtres sidebar).")
@@ -602,15 +682,16 @@ elif active_tab == TAB_NAMES[3]:
     if not df.empty:
         v_min_all = int(df["vitesse"].min())
         v_max_all = int(df["vitesse"].max())
+        rk_safe = active_key.replace(" ", "_").replace("[", "").replace("]", "")
         threshold = st.slider(
             "Seuil de vitesse (km/h)",
             min_value=v_min_all, max_value=v_max_all,
             value=min(limit + 10, v_max_all),
-            step=1, key="cal_threshold",
+            step=1, key=f"cal_threshold_{rk_safe}",
         )
 
-        # Agrégation par jour : passages >= seuil
-        df_above  = df[df["vitesse"] >= threshold]
+        # Agrégation par jour
+        df_above = df[df["vitesse"] >= threshold]
         daily_exc = df_above.groupby("date").agg(
             n=("vitesse", "count"),
             vmax=("vitesse", "max"),
@@ -624,7 +705,6 @@ elif active_tab == TAB_NAMES[3]:
         if daily_exc.empty:
             st.info(f"Aucun passage ≥ {threshold} km/h dans les données.")
         else:
-            # Enrichissement
             daily_exc["date_str"]  = daily_exc["date"].dt.strftime("%d/%m/%Y")
             daily_exc["jour_sem"]  = daily_exc["date"].dt.dayofweek
             daily_exc["semaine"]   = daily_exc["date"].dt.isocalendar().week.astype(int)
@@ -632,7 +712,6 @@ elif active_tab == TAB_NAMES[3]:
             daily_exc["jour_mois"] = daily_exc["date"].dt.day
             daily_exc["annee"]     = daily_exc["date"].dt.year
 
-            # Palette GitHub : gris → vert foncé
             GH_SCALE = [
                 [0.0,   "#ebedf0"],
                 [0.001, "#c6e48b"],
@@ -641,7 +720,6 @@ elif active_tab == TAB_NAMES[3]:
                 [1.0,   "#196127"],
             ]
 
-            # Grille complète de toutes les dates mesurées
             full_range = pd.date_range(df["date"].min(), df["date"].max(), freq="D")
             all_days = pd.DataFrame({
                 "date":     full_range,
@@ -651,7 +729,6 @@ elif active_tab == TAB_NAMES[3]:
                 "mois":     full_range.month,
                 "date_str": full_range.strftime("%d/%m/%Y"),
             })
-            # Marquer les jours effectivement dans les données
             measured_dates = set(df["date"].dt.normalize().unique())
             all_days["in_data"] = all_days["date"].isin(measured_dates)
             all_days = all_days.merge(
@@ -660,11 +737,9 @@ elif active_tab == TAB_NAMES[3]:
             all_days["n"]    = all_days["n"].fillna(0).astype(int)
             all_days["vmax"] = all_days["vmax"].fillna(0).astype(int)
 
-            # ── Vue 1 : Style GitHub ─────────────────────────────────────────
+            # ── Vue 1 : Style GitHub ──────────────────────────────────────────
             st.markdown("#### 📅 Vue 1 — Style GitHub : semaines × jours de semaine")
 
-            # zmax global : cohérent entre toutes les années, évite l'effondrement
-            # de l'échelle quand une année n'a aucun dépassement
             zmax_global = max(1, int(daily_exc["n"].max()))
 
             for year in sorted(all_days["annee"].unique()):
@@ -673,7 +748,6 @@ elif active_tab == TAB_NAMES[3]:
                 week_idx = {w: i for i, w in enumerate(weeks)}
                 n_weeks  = len(weeks)
 
-                # NaN = jour hors période (transparent), 0 = jour mesuré sans dépassement
                 Z     = [[float("nan")] * n_weeks for _ in range(7)]
                 Hover = [[""]           * n_weeks for _ in range(7)]
 
@@ -687,7 +761,6 @@ elif active_tab == TAB_NAMES[3]:
                             txt += f"<br>Vit. max : {int(row['vmax'])} km/h"
                         Hover[dow][wi] = txt
 
-                # Annotations des mois
                 seen, month_annots = set(), []
                 for _, row in yr.sort_values("date").iterrows():
                     m = int(row["mois"])
@@ -724,7 +797,7 @@ elif active_tab == TAB_NAMES[3]:
                 )
                 st.plotly_chart(fig_gh, use_container_width=True)
 
-            # ── Vue 2 : Grille mois × jour du mois ──────────────────────────
+            # ── Vue 2 : Grille mois × jour du mois ───────────────────────────
             st.markdown("#### 📆 Vue 2 — Grille mois × jour du mois")
 
             all_days["jour_mois"] = all_days["date"].dt.day
@@ -736,7 +809,6 @@ elif active_tab == TAB_NAMES[3]:
                 .sort_values("date")["mois_label"].tolist()
             )
 
-            # Pivot valeurs (jours mesurés uniquement)
             piv_val = (
                 all_days[all_days["in_data"]]
                 .pivot_table(index="mois_label", columns="jour_mois",
@@ -744,14 +816,13 @@ elif active_tab == TAB_NAMES[3]:
                 .reindex(index=month_order, columns=range(1, 32))
             )
 
-            # Hover
             hover_dict = {}
             for _, row in all_days[all_days["in_data"]].iterrows():
-                key = (row["mois_label"], int(row["jour_mois"]))
+                key_h = (row["mois_label"], int(row["jour_mois"]))
                 txt = f"{row['date_str']}<br>{int(row['n'])} passage(s) ≥ {threshold} km/h"
                 if row["n"] > 0:
                     txt += f"<br>Vit. max : {int(row['vmax'])} km/h"
-                hover_dict[key] = txt
+                hover_dict[key_h] = txt
 
             hover2 = [
                 [hover_dict.get((ml, d), "") for d in range(1, 32)]
@@ -782,7 +853,9 @@ elif active_tab == TAB_NAMES[3]:
             st.plotly_chart(fig_g2, use_container_width=True)
 
 
-# ---- Tab 5 : Données brutes ----
+# ============================================================================
+# Tab 5 : Données brutes
+# ============================================================================
 elif active_tab == TAB_NAMES[4]:
     st.subheader("Données brutes")
 
