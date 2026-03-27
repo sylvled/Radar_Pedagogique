@@ -3,6 +3,9 @@ Radar Pédagogique — Application d'analyse statistique
 Données Elan Cité / Evocom (.dbz1)
 """
 
+VERSION = "1.3.0"
+VERSION_DATE = "2026-03-27"
+
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -286,6 +289,7 @@ with st.sidebar:
         width=60,
     )
     st.title("Radar Pédagogique")
+    st.caption(f"v{VERSION} — {VERSION_DATE}")
     st.markdown("---")
 
     # ── Uploader ──────────────────────────────────────────────────────────────
@@ -1082,6 +1086,23 @@ elif active_tab == TAB_NAMES[5]:
             )
 
         st.markdown("---")
+
+        # Infos version
+        st.subheader("🔖 Version déployée")
+        try:
+            import subprocess
+            git_hash = subprocess.check_output(
+                ["git", "rev-parse", "--short", "HEAD"],
+                cwd=Path(__file__).parent,
+                stderr=subprocess.DEVNULL,
+            ).decode().strip()
+        except Exception:
+            git_hash = "—"
+        col_v1, col_v2, col_v3 = st.columns(3)
+        col_v1.metric("Version", f"v{VERSION}")
+        col_v2.metric("Date", VERSION_DATE)
+        col_v3.metric("Commit Git", git_hash)
+
         st.caption(
             "ℹ️ Les statistiques sont stockées localement sur le serveur. "
             "Elles se réinitialisent lors d'un redéploiement sur Streamlit Community Cloud."
@@ -1101,5 +1122,9 @@ st.markdown(
 st.markdown(
     "<small>⚠️ Note : ce radar enregistre uniquement les véhicules "
     f"dépassant {limit} km/h. Les passages en-dessous de ce seuil ne sont pas comptabilisés.</small>",
+    unsafe_allow_html=True
+)
+st.markdown(
+    f"<small style='color:#bbb'>🔖 Version {VERSION} — {VERSION_DATE}</small>",
     unsafe_allow_html=True
 )
