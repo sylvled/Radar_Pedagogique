@@ -11,6 +11,8 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from pathlib import Path
 import sys
+import json
+import datetime
 
 # Ajouter le répertoire racine au path pour importer le parser
 sys.path.insert(0, str(Path(__file__).parent))
@@ -86,6 +88,35 @@ div[data-testid="stRadio"] > div > label:has(input:checked) {
     text-overflow: ellipsis;
     white-space: nowrap;
 }
+/* Animation loader */
+@keyframes radar-spin {
+    0%   { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+@keyframes radar-pulse {
+    0%, 100% { opacity: 1; }
+    50%       { opacity: 0.4; }
+}
+.loader-wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 40px 20px;
+    gap: 16px;
+}
+.loader-ring {
+    width: 56px; height: 56px;
+    border: 5px solid #f0f2f6;
+    border-top: 5px solid #ff4b4b;
+    border-radius: 50%;
+    animation: radar-spin 0.9s linear infinite;
+}
+.loader-text {
+    font-size: 1rem;
+    color: #555;
+    animation: radar-pulse 1.4s ease-in-out infinite;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -93,6 +124,52 @@ div[data-testid="stRadio"] > div > label:has(input:checked) {
 # Constantes
 # ---------------------------------------------------------------------------
 SAMPLE_FOLDER = Path(__file__).parent / "sample_data"
+STATS_FILE    = Path(__file__).parent / "stats" / "visits.json"
+
+# Mot de passe admin (priorité : st.secrets > variable d'env > défaut)
+try:
+    ADMIN_PASSWORD = st.secrets["ADMIN_PASSWORD"]
+except Exception:
+    ADMIN_PASSWORD = "radar2024"
+
+# ---------------------------------------------------------------------------
+# Statistiques de visites
+# ---------------------------------------------------------------------------
+
+def load_stats() -> dict:
+    """Charge les statistiques de visites depuis le fichier JSON."""
+    try:
+        if STATS_FILE.exists():
+            with open(STATS_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return {"total": 0, "daily": {}, "first_visit": None}
+
+
+def save_stats(stats: dict) -> None:
+    """Sauvegarde atomique des statistiques (fichier temporaire → rename)."""
+    try:
+        STATS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        tmp = STATS_FILE.with_suffix(".tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(stats, f, ensure_ascii=False, indent=2)
+        tmp.replace(STATS_FILE)
+    except Exception:
+        pass
+
+
+def record_visit() -> None:
+    """Enregistre une nouvelle session (appelé une seule fois par session navigateur)."""
+    stats = load_stats()
+    today = datetime.date.today().isoformat()
+    stats["total"] = stats.get("total", 0) + 1
+    stats.setdefault("daily", {})
+    stats["daily"][today] = stats["daily"].get(today, 0) + 1
+    if not stats.get("first_visit"):
+        stats["first_visit"] = today
+    save_stats(stats)
+
 
 DAYS_FR = {0: "Lundi", 1: "Mardi", 2: "Mercredi", 3: "Jeudi",
            4: "Vendredi", 5: "Samedi", 6: "Dimanche"}
@@ -186,6 +263,11 @@ def get_radar_label(data_bytes: bytes, filename: str) -> str:
 if "radars" not in st.session_state:
     # dict {unique_key: bytes}
     st.session_state.radars = {}
+
+# Enregistrement de la session (une seule fois par onglet navigateur)
+if "session_recorded" not in st.session_state:
+    st.session_state.session_recorded = True
+    record_visit()
 
 # Auto-chargement des fichiers de démonstration au premier lancement
 if not st.session_state.radars and SAMPLE_FOLDER.exists():
@@ -295,15 +377,28 @@ if not active_key:
 # ---------------------------------------------------------------------------
 # Chargement et parsing du radar actif
 # ---------------------------------------------------------------------------
-with st.spinner("Décompression et analyse du fichier..."):
-    try:
-        meta, df = load_dataset(
-            st.session_state.radars[active_key],
-            active_key,
-        )
-    except Exception as e:
-        st.error(f"Erreur de lecture du fichier : {e}")
-        st.stop()
+_load_placeholder = st.empty()
+_is_cached = load_dataset.cache_info().currsize > 0 if hasattr(load_dataset, "cache_info") else False
+
+with _load_placeholder.container():
+    st.markdown("""
+    <div class="loader-wrap">
+        <div class="loader-ring"></div>
+        <div class="loader-text">⏳ Décompression et analyse du fichier radar…</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+try:
+    meta, df = load_dataset(
+        st.session_state.radars[active_key],
+        active_key,
+    )
+except Exception as e:
+    _load_placeholder.empty()
+    st.error(f"Erreur de lecture du fichier : {e}")
+    st.stop()
+
+_load_placeholder.empty()
 
 
 # ---------------------------------------------------------------------------
@@ -399,6 +494,7 @@ TAB_NAMES = [
     "📅 Tendances",
     "📆 Calendrier",
     "📋 Données brutes",
+    "🔐 Admin",
 ]
 if "active_tab" not in st.session_state:
     st.session_state.active_tab = TAB_NAMES[0]
@@ -880,6 +976,116 @@ elif active_tab == TAB_NAMES[4]:
         )
     else:
         st.info("Aucune donnée avec les filtres actuels.")
+
+
+# ============================================================================
+# Tab 6 : Admin
+# ============================================================================
+elif active_tab == TAB_NAMES[5]:
+    st.subheader("🔐 Zone Administration")
+
+    # ── Authentification ──────────────────────────────────────────────────────
+    if not st.session_state.get("admin_auth", False):
+        st.markdown(
+            "Cette zone est réservée à l'administrateur. "
+            "Entrez le mot de passe pour accéder aux statistiques d'utilisation."
+        )
+        col_pwd, col_btn, _ = st.columns([2, 1, 3])
+        with col_pwd:
+            pwd_input = st.text_input("Mot de passe", type="password",
+                                      key="admin_pwd_input", label_visibility="collapsed",
+                                      placeholder="Mot de passe…")
+        with col_btn:
+            if st.button("🔓 Connexion", use_container_width=True):
+                if pwd_input == ADMIN_PASSWORD:
+                    st.session_state.admin_auth = True
+                    st.rerun()
+                else:
+                    st.error("Mot de passe incorrect.")
+    else:
+        # ── Dashboard statistiques ────────────────────────────────────────────
+        col_logout, _ = st.columns([1, 5])
+        with col_logout:
+            if st.button("🔒 Déconnexion"):
+                st.session_state.admin_auth = False
+                st.rerun()
+
+        st.markdown("---")
+        stats = load_stats()
+        daily = stats.get("daily", {})
+
+        # KPIs globaux
+        today_str    = datetime.date.today().isoformat()
+        week_ago     = (datetime.date.today() - datetime.timedelta(days=6)).isoformat()
+        month_ago    = (datetime.date.today() - datetime.timedelta(days=29)).isoformat()
+
+        total        = stats.get("total", 0)
+        visits_today = daily.get(today_str, 0)
+        visits_week  = sum(v for k, v in daily.items() if k >= week_ago)
+        visits_month = sum(v for k, v in daily.items() if k >= month_ago)
+        first_visit  = stats.get("first_visit", "—")
+
+        ka, kb, kc, kd = st.columns(4)
+        ka.metric("🌐 Sessions totales",  f"{total:,}")
+        kb.metric("📅 Aujourd'hui",        f"{visits_today:,}")
+        kc.metric("📆 7 derniers jours",   f"{visits_week:,}")
+        kd.metric("🗓️ 30 derniers jours",  f"{visits_month:,}")
+
+        st.caption(f"Première visite enregistrée : **{first_visit}**")
+        st.markdown("---")
+
+        # Graphique : sessions par jour (30 derniers jours)
+        st.subheader("📈 Sessions par jour — 30 derniers jours")
+        if daily:
+            all_dates = pd.date_range(
+                start=(datetime.date.today() - datetime.timedelta(days=29)).isoformat(),
+                end=today_str,
+                freq="D",
+            )
+            df_stats = pd.DataFrame({
+                "date":     all_dates,
+                "sessions": [daily.get(d.date().isoformat(), 0) for d in all_dates],
+            })
+            fig_admin = px.bar(
+                df_stats, x="date", y="sessions",
+                labels={"date": "Date", "sessions": "Sessions"},
+                color="sessions",
+                color_continuous_scale="Blues",
+            )
+            fig_admin.update_layout(
+                height=320,
+                coloraxis_showscale=False,
+                margin=dict(t=10, b=10),
+            )
+            st.plotly_chart(fig_admin, use_container_width=True)
+        else:
+            st.info("Aucune donnée de visite enregistrée pour le moment.")
+
+        # Tableau journalier détaillé
+        st.subheader("📋 Détail journalier")
+        if daily:
+            df_detail = (
+                pd.DataFrame(list(daily.items()), columns=["Date", "Sessions"])
+                .sort_values("Date", ascending=False)
+                .reset_index(drop=True)
+            )
+            df_detail.index += 1
+            st.dataframe(df_detail, use_container_width=True, height=300)
+
+            # Export CSV
+            csv_admin = df_detail.to_csv(index=False, sep=";").encode("utf-8-sig")
+            st.download_button(
+                "⬇️ Exporter en CSV",
+                data=csv_admin,
+                file_name="radar_stats_visites.csv",
+                mime="text/csv",
+            )
+
+        st.markdown("---")
+        st.caption(
+            "ℹ️ Les statistiques sont stockées localement sur le serveur. "
+            "Elles se réinitialisent lors d'un redéploiement sur Streamlit Community Cloud."
+        )
 
 
 # ---------------------------------------------------------------------------

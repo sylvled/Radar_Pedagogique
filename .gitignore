@@ -26,3 +26,9 @@ env/
 # OS
 .DS_Store
 Thumbs.db
+
+# Streamlit secrets (contient le mot de passe admin — NE PAS COMMITER)
+.streamlit/secrets.toml
+
+# Statistiques de visites (données générées à l'exécution)
+stats/
