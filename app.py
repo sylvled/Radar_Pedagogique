@@ -3,8 +3,8 @@ Radar Pédagogique — Application d'analyse statistique
 Données Elan Cité / Evocom (.dbz1)
 """
 
-VERSION = "1.3.0"
-VERSION_DATE = "2026-03-27"
+VERSION = "1.4.0"
+VERSION_DATE = "2026-03-28"
 
 import streamlit as st
 import pandas as pd
@@ -201,6 +201,7 @@ def load_dataset(source_bytes: bytes, filename: str) -> tuple[dict, pd.DataFrame
             "limite": r.speed_limit,
             "vitesse": r.speed,
             "exces": r.excess,
+            "direction": r.direction,
         })
 
     df = pd.DataFrame(records)
@@ -426,10 +427,22 @@ with st.sidebar:
             value=(int(df["vitesse"].min()), int(df["vitesse"].max())),
             key=f"fs_{rk_safe}",
         )
+
+        is_bidirectional = df["direction"].nunique() > 1
+        if is_bidirectional:
+            sel_dir = st.selectbox(
+                "Sens de passage",
+                ["Tous", "Sens principal", "Sens inverse"],
+                key=f"fdir_{rk_safe}",
+            )
+        else:
+            sel_dir = "Tous"
     else:
         sel_year = "Tous"
         sel_day = "Tous"
         speed_range = None
+        is_bidirectional = False
+        sel_dir = "Tous"
 
 
 # ---------------------------------------------------------------------------
@@ -447,6 +460,10 @@ if sel_day != "Tous":
 if speed_range is not None:
     lo, hi = speed_range
     df_f = df_f[(df_f["vitesse"] >= lo) & (df_f["vitesse"] <= hi)]
+
+if sel_dir != "Tous":
+    dir_val = 0 if sel_dir == "Sens principal" else 1
+    df_f = df_f[df_f["direction"] == dir_val]
 
 
 # ---------------------------------------------------------------------------
@@ -482,6 +499,16 @@ with k4:
 with k5:
     avg_day = df_f.shape[0] / df_f["date"].nunique() if not df_f.empty and df_f["date"].nunique() > 0 else 0
     st.metric("Moy. / jour", f"{avg_day:.0f} passages")
+
+if is_bidirectional and not df_f.empty:
+    n0 = (df_f["direction"] == 0).sum()
+    n1 = (df_f["direction"] == 1).sum()
+    pct1 = n1 / len(df_f) * 100
+    st.caption(
+        f"🔀 Radar bidirectionnel — "
+        f"Sens principal : **{n0:,}** passages ({100 - pct1:.1f}%) | "
+        f"Sens inverse : **{n1:,}** passages ({pct1:.1f}%)"
+    )
 
 st.markdown("---")
 
@@ -957,9 +984,14 @@ elif active_tab == TAB_NAMES[4]:
     st.subheader("Données brutes")
 
     if not df_f.empty:
-        display_df = df_f[["date", "heure", "vitesse", "limite", "exces"]].copy()
+        cols = ["date", "heure", "vitesse", "limite", "exces"]
+        col_names = ["Date", "Heure (tranche)", "Vitesse (km/h)", "Limite (km/h)", "Excès (km/h)"]
+        if is_bidirectional:
+            cols.append("direction")
+            col_names.append("Sens (0=principal, 1=inverse)")
+        display_df = df_f[cols].copy()
         display_df["date"] = display_df["date"].dt.strftime("%d/%m/%Y")
-        display_df.columns = ["Date", "Heure (tranche)", "Vitesse (km/h)", "Limite (km/h)", "Excès (km/h)"]
+        display_df.columns = col_names
 
         st.dataframe(
             display_df.sort_values("Date"),

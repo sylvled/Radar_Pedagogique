@@ -44,7 +44,7 @@ Radar_Pédagogique/
 **GitHub :** https://github.com/sylvled/Radar_Pedagogique
 
 ## Version courante
-`v1.3.0 — 2026-03-27` — commit `d21fc83`
+`v1.4.0 — 2026-03-28` — support radar bidirectionnel (filtre sens + KPI direction)
 
 ## Commandes Docker
 ```bash
