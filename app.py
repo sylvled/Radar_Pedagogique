@@ -284,10 +284,7 @@ if not st.session_state.radars and SAMPLE_FOLDER.exists():
 # Sidebar — Gestion des radars
 # ---------------------------------------------------------------------------
 with st.sidebar:
-    st.image(
-        "https://upload.wikimedia.org/wikipedia/commons/thumb/c/cf/Speed_camera_icon.svg/100px-Speed_camera_icon.svg.png",
-        width=60,
-    )
+    st.markdown("<span style='font-size:3rem'>🚦</span>", unsafe_allow_html=True)
     st.title("Radar Pédagogique")
     st.caption(f"v{VERSION} — {VERSION_DATE}")
     st.markdown("---")

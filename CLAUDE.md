@@ -1,24 +1,33 @@
 # Radar_Pédagogique — Contexte projet Claude Code
 
 ## Description
-Application web d'analyse statistique des données d'un radar pédagogique
-(Elan Cité / logiciel Evocom). Visualise les passages de véhicules détectés
-au-dessus de la limite de vitesse configurée.
+Application Streamlit d'analyse statistique des données d'un radar pédagogique
+(équipement Elan Cité / logiciel Evocom). Lit des fichiers binaires `.dbz1` et
+produit des visualisations interactives (distribution, profil horaire, tendances,
+calendrier GitHub-style, zone Admin protégée).
 
 ## Stack technique
-- **Application** : Python 3.12 + Streamlit
-- **Visualisations** : Plotly
-- **Données** : Pandas
-- **Déploiement** : Docker
+- **Application** : Python 3.12 + Streamlit 1.55
+- **Visualisations** : Plotly 6
+- **Données** : Pandas 2
+- **Déploiement** : Docker (local) + Streamlit Community Cloud
 
 ## Structure du projet
 ```
 Radar_Pédagogique/
-├── app.py                  # Application Streamlit (point d'entrée)
+├── app.py                      # Application Streamlit (point d'entrée)
 ├── parser/
 │   ├── __init__.py
-│   └── dbz1_parser.py     # Parser du format .dbz1 (Elan Cité)
-├── input_files/           # Dossier des fichiers .dbz1 surveillé
+│   └── dbz1_parser.py          # Parser du format .dbz1 (Elan Cité)
+├── sample_data/                # Fichier(s) de démo embarqués dans le repo
+│   └── stats-0004A34A8390.dbz1
+├── input_files/                # Fichiers .dbz1 locaux (gitignorés)
+├── stats/                      # Statistiques de visites (gitignorées, auto-générées)
+├── .streamlit/
+│   ├── secrets.toml            # Mot de passe Admin (gitignorés)
+│   └── secrets.toml.example
+├── .claude/
+│   └── settings.local.json
 ├── requirements.txt
 ├── Dockerfile
 ├── docker-compose.yml
@@ -28,19 +37,46 @@ Radar_Pédagogique/
 ## Ports
 | Service   | Port hôte | Port container |
 |-----------|-----------|----------------|
-| Streamlit | 8510      | 8501           |
+| Streamlit | **8510**  | 8501           |
 
-## Commandes
+**URL locale :** http://localhost:8510
+**URL Streamlit Cloud :** https://[app].streamlit.app (compte sylvled)
+**GitHub :** https://github.com/sylvled/Radar_Pedagogique
+
+## Version courante
+`v1.3.0 — 2026-03-27` — commit `d21fc83`
+
+## Commandes Docker
 ```bash
-# Développement local (sans Docker)
-pip install -r requirements.txt
-streamlit run app.py
-
-# Docker
+# Démarrer (reconstruction complète obligatoire après changement de code)
 docker compose up -d --build
+
+# Logs en direct
 docker compose logs -f
+
+# Arrêter
 docker compose down
 ```
+
+## Commandes développement direct (sans Docker)
+```bash
+pip install -r requirements.txt
+streamlit run app.py
+```
+
+## Fonctionnalités
+- **Multi-radar** : charger N fichiers .dbz1 via uploader ou dossier `sample_data/`
+- **Onglets** : Distribution vitesses | Profil horaire | Tendances | Calendrier | Données brutes | Admin
+- **Calendrier** : Vue GitHub (semaines × jours) + Vue mois × jour du mois, avec slider seuil
+- **Top 50** : tableau des vitesses les plus élevées
+- **Zone Admin** : protégée par mot de passe, statistiques de visites journalières + export CSV
+
+## Secrets Streamlit (mot de passe Admin)
+Fichier `.streamlit/secrets.toml` (gitignorés — NE JAMAIS COMMITER) :
+```toml
+ADMIN_PASSWORD = "radar2024"
+```
+Sur Streamlit Community Cloud : App Settings → Secrets → coller le contenu.
 
 ## Format des fichiers .dbz1 (Elan Cité / Evocom)
 
@@ -61,19 +97,17 @@ Un fichier = N blocs journaliers consécutifs. Chaque bloc :
   - `uint16 BE` (2o) = **vitesse_limite** km/h (constante par installation)
   - `uint16 BE` (2o) = **vitesse_mesurée** km/h
 
-### Fichier de référence analysé
+### Fichier de démo embarqué
 - `stats-0004A34A8390.dbz1`
 - **554 blocs** (journées) du 14/09/2024 au 21/03/2026
 - **139 570 passages** au total
 - Commune : **Hourton**
-- Limite configurée : **64 km/h**
+- Limite configurée : **64 km/h** (seuil personnalisé, non standard France)
 - Plage horaire : 6h10 à 21h10
-- Vitesses : 65 à 108 km/h
+- Vitesses enregistrées : 65 à 108 km/h
 
 ### Points d'attention
-- Le radar n'enregistre que les véhicules **au-dessus** de la limite
-- Le champ `slot_temps` × 10 = minutes depuis minuit (ex: slot 54 = 9h00)
-- La limite 64 km/h est inhabituelle (non standard France) — peut être un seuil
-  personnalisé plutôt que la limite légale du tronçon
+- Le radar n'enregistre que les véhicules **au-dessus** de la limite configurée
+- `slot_temps` × 10 = minutes depuis minuit (ex: slot 54 = 9h00)
+- Firmware : "4.8.x" avec caractère Unicode U+0135 en fin (artefact hardware)
 - Pas de champ "sens de passage" dans ce format
-- Firmware : "4.8.x" avec un caractère Unicode U+0135 en fin (artefact hardware)
