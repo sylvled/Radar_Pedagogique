@@ -40,8 +40,9 @@ class RadarRecord:
     """Un passage de véhicule détecté par le radar."""
     recording_date: date
     time_slot: int      # slot × 10 min = minutes depuis minuit
-    speed_limit: int    # km/h
+    speed_limit: int    # km/h (v2 & ~0x20, bit 5 réservé à la direction)
     speed: int          # km/h mesuré
+    direction: int = 0  # 0 = sens principal, 1 = sens inverse (v2 & 0x20)
 
     @property
     def slot_minutes(self) -> int:
@@ -220,13 +221,17 @@ def _parse_block_records(decompressed: bytes, recording_date: Optional[date]) ->
             # Filtrer les enregistrements corrompus (champ = séparateur)
             if v1 != 0xFFFD and v2 != 0xFFFD and v3 != 0xFFFD:
                 # v1 = slot_temps (tranche × 10 min depuis minuit)
-                # v2 = seuil configuré (constante, ex. 64 km/h)
+                # v2 = seuil + flag direction : bit 5 (0x20) = sens inverse
+                #      sens = (v2 & 0x20) >> 5, limite = v2 & ~0x20
                 # v3 = vitesse mesurée (km/h, toujours > seuil)
+                direction = 1 if (v2 & 0x20) else 0
+                speed_limit = v2 & ~0x20
                 records.append(RadarRecord(
                     recording_date=d,
                     time_slot=v1,
-                    speed_limit=v2,
+                    speed_limit=speed_limit,
                     speed=v3,
+                    direction=direction,
                 ))
             i += 8
         else:

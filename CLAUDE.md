@@ -90,12 +90,21 @@ Un fichier = N blocs journaliers consécutifs. Chaque bloc :
 
 ### Données décompressées (par bloc)
 - Magic : `0xA0B0C0D0`
-- Header TLV (UTF-16 LE) : version, commune, MAC, OS, firmware
-- Enregistrements de **8 octets** chacun :
+- Header TLV (UTF-16 LE) : version, commune, MAC, OS, firmware, "OK-STATS-GET-NNNNN-"
+- Enregistrements FFFD de **8 octets** chacun (**1 record = 1 véhicule réel**) :
   - `0xFFFD` (2o) = séparateur
-  - `uint16 BE` (2o) = **slot_temps** × 10 min depuis minuit
-  - `uint16 BE` (2o) = **vitesse_limite** km/h (constante par installation)
-  - `uint16 BE` (2o) = **vitesse_mesurée** km/h
+  - `uint16 BE` (2o) = **slot_temps** × 10 min depuis minuit (UTC)
+  - `uint16 BE` (2o) = **v2** : vitesse_limite + direction encodée
+    - bit 5 (0x20) = sens de passage : 0 = sens principal, 1 = sens inverse
+    - vitesse_limite = v2 & ~0x20 (ex : v2=64→limite=64 dir=0, v2=96→limite=64 dir=1)
+  - `uint16 BE` (2o) = **vitesse_mesurée** km/h (toujours > limite)
+- Section GAP (après les FFFD) : "OK-STATS-GET-NNNNN-" + mêmes records en format 4 octets (redondant)
+
+### Ce que contient / ne contient PAS le binaire
+- **Contient** : passages de véhicules **au-dessus du seuil uniquement** (par conception du radar)
+- **Ne contient PAS** : vitesses sous le seuil — les 4,8M records < 64 km/h visibles
+  dans les bases Evograph sont des enregistrements synthétiques ajoutés lors du traitement
+- **Evograph** reécrit et enrichit le .db lors du premier import (ajout des vitesses estimées)
 
 ### Fichier de démo embarqué
 - `stats-0004A34A8390.dbz1`
@@ -110,4 +119,6 @@ Un fichier = N blocs journaliers consécutifs. Chaque bloc :
 - Le radar n'enregistre que les véhicules **au-dessus** de la limite configurée
 - `slot_temps` × 10 = minutes depuis minuit (ex: slot 54 = 9h00)
 - Firmware : "4.8.x" avec caractère Unicode U+0135 en fin (artefact hardware)
-- Pas de champ "sens de passage" dans ce format
+- Le champ **direction** est encodé dans le bit 5 du champ v2 (FFFD record)
+  - Radar unidirectionnel (Hourton) : v2=64 toujours (direction=0 uniquement)
+  - Radar bidirectionnel (Pont-à-Cot) : v2=64 (96.65%), v2=96 (2.82% = sens inverse)
